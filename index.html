@@ -1,0 +1,206 @@
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jeu Demi Camembert en Ligne</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f4f4f4; text-align: center; padding: 2rem; }
+    #game { display: none; }
+    canvas { margin-top: 2rem; background: #fff; border-radius: 50%; border: 2px solid #000; }
+    input, button { padding: 0.5rem; margin: 1rem; font-size: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Jeu Demi Camembert 🎯</h1>
+
+  <div id="setup">
+    <input id="room" placeholder="Code de la partie" />
+    <button onclick="createRoom()">Créer</button>
+    <button onclick="joinRoom()">Rejoindre</button>
+  </div>
+
+  <div id="game">
+    <p id="roleInfo"></p>
+    <div id="step1">
+      <p>Valeur cible : <span id="targetValue"></span></p>
+      <input id="opinionInput" placeholder="Donne ton avis (mot ou phrase)" />
+      <button onclick="submitOpinion()">Envoyer l'avis</button>
+    </div>
+
+    <div id="step2">
+      <p>Avis reçu : <span id="receivedOpinion"></span></p>
+      <canvas id="camembert" width="400" height="200"></canvas>
+      <p>Valeur estimée : <span id="guessValue">0</span></p>
+      <button onclick="submitGuess()">Valider la position</button>
+    </div>
+
+    <div id="result" style="display:none">
+      <p>Résultat : <span id="resultText"></span></p>
+      <p>Score global : <span id="globalScore">0</span></p>
+      <button onclick="nextRound()">Tour suivant</button>
+    </div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyBsbR3mEKLfC-xjHJXbqpDC12dDTxEnS_Q",
+      authDomain: "jeucamembertttt.firebaseapp.com",
+      databaseURL: "https://jeucamembertttt-default-rtdb.firebaseio.com",
+      projectId: "jeucamembertttt",
+      storageBucket: "jeucamembertttt.appspot.com",
+      messagingSenderId: "205248653632",
+      appId: "1:205248653632:web:f82e28c5d77b52162bb2a5"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    const canvas = document.getElementById("camembert");
+    const ctx = canvas.getContext("2d");
+
+    let role = "";
+    let value = 0;
+    let room = "";
+    let guess = 0;
+    let playerId = Math.random().toString(36).substring(2, 10);
+    let globalScore = 0;
+
+    function drawCamembert(pos = -1) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.beginPath();
+      ctx.arc(200, 200, 200, Math.PI, 0);
+      ctx.stroke();
+
+      if (pos >= 0) {
+        const angle = Math.PI * (pos / 100);
+        const x = 200 + Math.cos(Math.PI - angle) * 200;
+        const y = 200 - Math.sin(Math.PI - angle) * 200;
+
+        ctx.beginPath();
+        ctx.moveTo(200, 200);
+        ctx.lineTo(x, y);
+        ctx.strokeStyle = 'red';
+        ctx.stroke();
+
+        document.getElementById("guessValue").textContent = pos;
+      }
+    }
+
+    canvas.addEventListener("click", (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const pos = Math.min(100, Math.max(0, Math.round((x / canvas.width) * 100)));
+      guess = pos;
+      drawCamembert(pos);
+    });
+
+    function createRoom() {
+      room = Math.random().toString(36).substring(2, 7);
+      alert("Code de la partie : " + room);
+      db.ref(`rooms/${room}/players/${playerId}`).set({ joined: true, score: 0 });
+      waitForOpponent();
+    }
+
+    function joinRoom() {
+      room = document.getElementById("room").value;
+      if (room) {
+        db.ref(`rooms/${room}/players/${playerId}`).set({ joined: true, score: 0 });
+        waitForOpponent();
+      }
+    }
+
+    function waitForOpponent() {
+      db.ref(`rooms/${room}/players`).on("value", snapshot => {
+        const players = snapshot.val();
+        if (players && Object.keys(players).length === 2) {
+          startGame();
+        }
+      });
+    }
+
+    function startGame() {
+      document.getElementById("setup").style.display = "none";
+      document.getElementById("game").style.display = "block";
+      db.ref(`rooms/${room}/turn`).once("value").then(snap => {
+        if (!snap.exists()) {
+          // Initialise le tour
+          db.ref(`rooms/${room}/turn`).set(Object.keys({ ...{} }).find(id => id !== playerId) || playerId);
+        }
+      });
+
+      db.ref(`rooms/${room}/turn`).on("value", snap => {
+        const turn = snap.val();
+        role = (turn === playerId) ? "player1" : "player2";
+        updateTurn(role);
+      });
+
+      db.ref(`rooms/${room}/opinion`).on("value", snap => {
+        if (snap.exists() && role === "player2") {
+          document.getElementById("receivedOpinion").textContent = snap.val();
+          drawCamembert();
+        }
+      });
+
+      db.ref(`rooms/${room}/scores/${playerId}`).on("value", snap => {
+        if (snap.exists()) {
+          globalScore = snap.val();
+          document.getElementById("globalScore").textContent = globalScore;
+        }
+      });
+    }
+
+    function updateTurn(currentRole) {
+      document.getElementById("result").style.display = "none";
+      const isMyTurn = currentRole === "player1";
+      document.getElementById("step1").style.display = isMyTurn ? "block" : "none";
+      document.getElementById("step2").style.display = !isMyTurn ? "block" : "none";
+      document.getElementById("roleInfo").textContent = isMyTurn ? "Tu dois donner un avis" : "Tu dois deviner la valeur";
+      if (isMyTurn) {
+        value = Math.floor(Math.random() * 100) + 1;
+        document.getElementById("targetValue").textContent = value;
+        db.ref(`rooms/${room}/value`).set(value);
+        db.ref(`rooms/${room}/opinion`).remove();
+      } else {
+        db.ref(`rooms/${room}/value`).once("value").then(snap => {
+          value = snap.val();
+        });
+      }
+    }
+
+    function submitOpinion() {
+      const opinion = document.getElementById("opinionInput").value;
+      if (opinion) {
+        db.ref(`rooms/${room}/opinion`).set(opinion);
+        // Change turn to the other player
+        db.ref(`rooms/${room}/players`).once("value").then(snap => {
+          const players = snap.val();
+          const otherPlayerId = Object.keys(players).find(id => id !== playerId);
+          if(otherPlayerId) {
+            db.ref(`rooms/${room}/turn`).set(otherPlayerId);
+          }
+        });
+      }
+    }
+
+    function submitGuess() {
+      const score = 100 - Math.abs(guess - value);
+      globalScore += score;
+      document.getElementById("result").style.display = "block";
+      document.getElementById("step2").style.display = "none";
+      document.getElementById("resultText").textContent = `${score}/100`;
+      document.getElementById("globalScore").textContent = globalScore;
+      db.ref(`rooms/${room}/scores/${playerId}`).set(globalScore);
+    }
+
+    function nextRound() {
+      // Change turn back to the current player to start a new round
+      db.ref(`rooms/${room}/turn`).set(playerId);
+      document.getElementById("opinionInput").value = "";
+    }
+  </script>
+</body>
+</html>
